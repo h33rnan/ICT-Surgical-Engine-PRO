@@ -1,0 +1,161 @@
+//@version=6
+indicator("ICT_Surgical_Engine_PRO", overlay=true, max_lines_count=500, max_boxes_count=500, max_labels_count=500)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 1. TEMAS & UI ADAPTATIVA (DARK / LIGHT MODE)
+// ═══════════════════════════════════════════════════════════════════════════════
+string G_THEME = "Estética Quirúrgica & UI"
+themeChoice = input.string("Artic", "Tema Visual", options = ["Artic", "Mono"], group=G_THEME)
+isLight = input.bool(false, "Activar Modo Claro (Light Theme)", group=G_THEME, tooltip="Invierte los contrastes para fondos blancos.")
+hudSizeInput = input.string("Small", "Tamaño del HUD", options=["Tiny", "Small", "Normal", "Large"], group=G_THEME)
+
+// Mapeo de Tamaño
+hudSize = hudSizeInput == "Tiny" ? size.tiny : hudSizeInput == "Small" ? size.small : hudSizeInput == "Normal" ? size.normal : size.large
+
+// Motor de Inversión de Contraste
+color thBull = themeChoice == "Mono" ? (isLight ? #616161 : #9e9e9e) : (isLight ? #0288d1 : #4fc3f7) 
+color thBear = themeChoice == "Mono" ? (isLight ? #212121 : #424242) : (isLight ? #512da8 : #b39ddb) 
+color thSweep = themeChoice == "Mono" ? (isLight ? #000000 : #ffffff) : (isLight ? #0097a7 : #00e5ff) 
+color thEq = color.new(isLight ? color.black : color.gray, 60)
+
+// Variables UI para el HUD
+color bgHud = isLight ? color.new(color.white, 20) : color.new(color.black, 90)
+color borderHud = isLight ? color.new(color.gray, 60) : color.new(color.gray, 85)
+color txtMain = isLight ? color.black : color.white
+color txtSub = isLight ? color.new(color.black, 30) : color.gray
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 2. PARÁMETROS ESTRUCTURALES & MEMORIA
+// ═══════════════════════════════════════════════════════════════════════════════
+string G_STRUCT = "Motor de Precisión"
+leftBars  = input.int(7, "Validación Izquierda", group=G_STRUCT)
+rightBars = input.int(3, "Confirmación (Latencia)", group=G_STRUCT)
+
+var float lastHigh = na, var float lastLow = na
+var int idxHigh = na, var int idxLow = na
+
+var box[] oteBoxes = array.new_box()
+var line[] structLines = array.new_line()
+var label[] priceLabels = array.new_label()
+var line[] activeBearSweeps = array.new_line()
+var line[] activeBullSweeps = array.new_line()
+var box[] activeBullFVG = array.new_box()
+var box[] activeBearFVG = array.new_box()
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 3. DETECCIÓN DE FVGs Y MITIGACIÓN
+// ═══════════════════════════════════════════════════════════════════════════════
+bool isBullFVG = low > high[2] and close[1] > open[1]
+bool isBearFVG = high < low[2] and close[1] < open[1]
+
+if isBullFVG
+    array.push(activeBullFVG, box.new(bar_index[2], low, bar_index, high[2], border_color=na, bgcolor=color.new(thBull, isLight ? 85 : 90), extend=extend.right))
+if isBearFVG
+    array.push(activeBearFVG, box.new(bar_index[2], low[2], bar_index, high, border_color=na, bgcolor=color.new(thBear, isLight ? 85 : 90), extend=extend.right))
+
+if array.size(activeBullFVG) > 0
+    for i = array.size(activeBullFVG) - 1 to 0
+        if low < box.get_bottom(array.get(activeBullFVG, i))
+            box.delete(array.remove(activeBullFVG, i))
+
+if array.size(activeBearFVG) > 0
+    for i = array.size(activeBearFVG) - 1 to 0
+        if high > box.get_top(array.get(activeBearFVG, i))
+            box.delete(array.remove(activeBearFVG, i))
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 4. MATRIZ ESTRUCTURAL (SH / SL)
+// ═══════════════════════════════════════════════════════════════════════════════
+float ph = ta.pivothigh(high, leftBars, rightBars)
+float pl = ta.pivotlow(low, leftBars, rightBars)
+
+if not na(ph) or not na(pl)
+    if not na(ph)
+        lastHigh := ph, idxHigh := bar_index[rightBars]
+    if not na(pl)
+        lastLow := pl, idxLow := bar_index[rightBars]
+        
+    if not na(lastHigh) and not na(lastLow)
+        float rangeSize = math.abs(lastHigh - lastLow)
+        float eq = (lastHigh + lastLow) / 2
+        bool isBullish = idxLow < idxHigh
+        
+        if array.size(oteBoxes) > 0
+            box.delete(array.shift(oteBoxes))
+        for line_item in structLines
+            line.delete(line_item)
+        array.clear(structLines)
+        for label_item in priceLabels
+            label.delete(label_item)
+        array.clear(priceLabels)
+                
+        int startX = math.max(idxHigh, idxLow), int endX = bar_index + 15 
+        
+        array.push(structLines, line.new(startX, lastHigh, endX, lastHigh, color=color.new(isLight ? color.black : color.gray, 70)))
+        array.push(structLines, line.new(startX, lastLow, endX, lastLow, color=color.new(isLight ? color.black : color.gray, 70)))
+        array.push(structLines, line.new(startX, eq, endX, eq, color=thEq, style=line.style_dashed)) 
+        
+        array.push(priceLabels, label.new(endX, lastHigh, "SH: " + str.tostring(lastHigh, "#.##"), style=label.style_label_left, color=color.new(color.black, 100), textcolor=txtSub, size=size.tiny))
+        array.push(priceLabels, label.new(endX, lastLow, "SL: " + str.tostring(lastLow, "#.##"), style=label.style_label_left, color=color.new(color.black, 100), textcolor=txtSub, size=size.tiny))
+        
+        if isBullish
+            array.push(oteBoxes, box.new(startX, lastHigh - (rangeSize * 0.62), endX, lastHigh - (rangeSize * 0.79), border_color=color.new(thBull, 40), bgcolor=color.new(thBull, isLight ? 75 : 85), text="OTE LONG", text_size=size.tiny, text_color=color.new(thBull, isLight ? 0 : 10), text_halign=text.align_right))
+        else
+            array.push(oteBoxes, box.new(startX, lastLow + (rangeSize * 0.79), endX, lastLow + (rangeSize * 0.62), border_color=color.new(thBear, 40), bgcolor=color.new(thBear, isLight ? 75 : 85), text="OTE SHORT", text_size=size.tiny, text_color=color.new(thBear, isLight ? 0 : 10), text_halign=text.align_right))
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 5. SWEEPS DE LIQUIDEZ Y MITIGACIÓN (ERROR SOLUCIONADO)
+// ═══════════════════════════════════════════════════════════════════════════════
+bool isBearishSweep = not na(lastHigh) and high > lastHigh and close < lastHigh
+bool isBullishSweep = not na(lastLow) and low < lastLow and close > lastLow
+
+barcolor(isBearishSweep or isBullishSweep ? thSweep : na)
+
+if isBearishSweep
+    array.push(activeBearSweeps, line.new(bar_index, high, bar_index + 8, high, color=thSweep, extend=extend.right))
+if isBullishSweep
+    array.push(activeBullSweeps, line.new(bar_index, low, bar_index + 8, low, color=thSweep, extend=extend.right))
+
+// PARCHE: Validación estricta de memoria antes del bucle inverso
+if array.size(activeBearSweeps) > 0
+    for i = array.size(activeBearSweeps) - 1 to 0
+        if high > line.get_y1(array.get(activeBearSweeps, i)) 
+            line.delete(array.remove(activeBearSweeps, i))
+
+if array.size(activeBullSweeps) > 0
+    for i = array.size(activeBullSweeps) - 1 to 0
+        if low < line.get_y1(array.get(activeBullSweeps, i)) 
+            line.delete(array.remove(activeBullSweeps, i))
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 6. MACROS NY & HUD
+// ═══════════════════════════════════════════════════════════════════════════════
+float nyTimeDec = hour(time, "America/New_York") + (minute(time, "America/New_York") / 60.0)
+string amdStage = "ZONA MUERTA", color amdColor = txtSub
+if (nyTimeDec >= 20.0) or (nyTimeDec < 3.0)
+    amdStage := "ACUMULACIÓN", amdColor := txtSub
+else if (nyTimeDec >= 3.0) and (nyTimeDec < 8.5)
+    amdStage := "MANIPULACIÓN", amdColor := isLight ? #e65100 : color.silver
+else if (nyTimeDec >= 8.5) and (nyTimeDec < 16.0)
+    amdStage := "DISTRIBUCIÓN", amdColor := thSweep 
+
+var table dash = table.new(position.top_right, 2, 8, border_width=1, bgcolor=bgHud, border_color=borderHud)
+if barstate.islast and not na(lastHigh) and not na(lastLow)
+    bool isBullish = idxLow < idxHigh
+    table.cell(dash, 0, 0, "SURGICAL ENGINE", text_color=txtMain, text_size=hudSize, text_font_family=font.family_monospace)
+    table.merge_cells(dash, 0, 0, 1, 0)
+    table.cell(dash, 0, 1, "Macro NY:", text_color=txtSub, text_size=hudSize)
+    table.cell(dash, 1, 1, amdStage, text_color=amdColor, text_size=hudSize, text_font_family=font.family_monospace)
+    table.cell(dash, 0, 2, "Sesgo HTF:", text_color=txtSub, text_size=hudSize)
+    table.cell(dash, 1, 2, isBullish ? "ALCISTA" : "BAJISTA", text_color=isBullish ? thBull : thBear, text_size=hudSize, text_font_family=font.family_monospace)
+    table.cell(dash, 0, 3, "Zona Actual:", text_color=txtSub, text_size=hudSize)
+    table.cell(dash, 1, 3, close > (lastHigh + lastLow) / 2 ? "PREMIUM" : "DISCOUNT", text_color=close > (lastHigh + lastLow) / 2 ? thBear : thBull, text_size=hudSize, text_font_family=font.family_monospace)
+    table.cell(dash, 0, 4, "Sweeps:", text_color=txtSub, text_size=hudSize)
+    table.cell(dash, 1, 4, str.tostring(array.size(activeBearSweeps) + array.size(activeBullSweeps)), text_color=thSweep, text_size=hudSize, text_font_family=font.family_monospace)
+    table.cell(dash, 0, 5, "FVGs:", text_color=txtSub, text_size=hudSize)
+    table.cell(dash, 1, 5, str.tostring(array.size(activeBullFVG) + array.size(activeBearFVG)), text_color=txtMain, text_size=hudSize, text_font_family=font.family_monospace)
+    
+    // FIRMA ADAPTATIVA
+    table.merge_cells(dash, 0, 7, 1, 7)
+    color sigBg = isLight ? color.new(color.black, 90) : color.new(color.black, 70)
+    table.cell(dash, 0, 7, "Created by H33RNAN", text_color=thSweep, bgcolor=sigBg, text_size=hudSize, text_font_family=font.family_monospace, text_halign=text.align_center)
